@@ -1,0 +1,2 @@
+# No additional packages are required.
+# SQLite is part of Python; FFmpeg is reused from VideoHelperSuite/imageio-ffmpeg.

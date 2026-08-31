@@ -1,0 +1,47 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I backed up my source library before testing file moves.
+          required: true
+        - label: I removed private images, tokens, and personal paths from this report.
+          required: true
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and the actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: ComfyUI version or commit
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Image Ledger version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Operating system
+      options: [Windows, Linux, macOS, Other]
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Relevant redacted logs
+      render: text

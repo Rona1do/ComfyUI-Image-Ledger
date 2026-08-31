@@ -1,0 +1,30 @@
+[project]
+name = "comfyui-image-ledger"
+version = "0.1.0"
+description = "Global source-image tracking, gallery browsing, and no-repeat video queues for ComfyUI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "bayforest" }]
+keywords = ["comfyui", "image-to-video", "gallery", "workflow", "sqlite"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Rona1do/ComfyUI-Image-Ledger"
+Documentation = "https://github.com/Rona1do/ComfyUI-Image-Ledger#readme"
+Repository = "https://github.com/Rona1do/ComfyUI-Image-Ledger"
+Issues = "https://github.com/Rona1do/ComfyUI-Image-Ledger/issues"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

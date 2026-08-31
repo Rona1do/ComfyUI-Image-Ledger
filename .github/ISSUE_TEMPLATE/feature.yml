@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest a broadly useful improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Problem
+      description: What workflow or maintenance problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives and safety considerations
+      description: Mention possible file-moving, privacy, or compatibility implications.

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Rona1do/ComfyUI-Image-Ledger/security/advisories/new
+    about: Report path traversal, unintended file changes, or data exposure privately.
