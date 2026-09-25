@@ -4,6 +4,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Global panel action and command to rerun the last completed source image, including files already moved into `_used`.
+
+### Fixed
+
+- The LoadImage list keeps the current selection when that image is already marked done, so a rerun can target a file inside `_used`.
+- The panel writes the selected image to the first-frame or source `LoadImage`, and skips last-frame and mask loaders.
+- “Scan existing videos” follows the move-source setting. With that setting off, a scan records completed sources and leaves the files where they are.
+
 ## [0.1.0] - 2026-08-31
 
 ### Added

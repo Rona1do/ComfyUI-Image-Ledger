@@ -8,7 +8,7 @@ We aim to acknowledge reports within 7 days and provide an initial assessment wi
 
 ## Security boundaries
 
-- API paths must remain relative to ComfyUI input/output roots.
+- API paths must remain relative to ComfyUI input/output roots. Rerun accepts an absolute path only after it is reduced to a file inside the input directory.
 - Directory links deliberately placed under those roots are supported.
 - Source-file movement is opt-in and should be tested on backed-up data.
 - The project has no telemetry and makes no outbound network requests.

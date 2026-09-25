@@ -16,7 +16,7 @@ Large image-to-video libraries are surprisingly hard to manage: a source may be 
 ## Highlights
 
 - Global tracking for ordinary `LoadImage` workflows—no custom nodes required.
-- Full-screen source gallery, category picker, random pick, skip, run, reject, and undo.
+- Full-screen source gallery, category picker, random pick, skip, run, rerun last, reject, and undo.
 - Optional move-on-success into a sibling `_used` folder.
 - SHA-256 content deduplication, so renamed copies count as the same image.
 - SQLite transactions and reservations prevent concurrent jobs from selecting the same source.
@@ -56,8 +56,9 @@ No extra Python package is required. Pillow, SQLite, and aiohttp are supplied by
 3. Choose a category, then open the gallery or pick a random image.
 4. Click **Run this**. The selected image is written to the most likely source `LoadImage` node and the workflow is queued.
 5. When the workflow finishes with a saved video, the image is recorded as complete.
+6. Click **Rerun last** to load that same source again and queue the workflow. This still works after the file has moved into `_used`.
 
-Image Ledger prefers `LoadImage` nodes titled like “source”, “first frame”, “源图”, or “首帧”, and ignores nodes titled like “last frame”, “mask”, “末帧”, or “遮罩”. If a workflow has only one active `LoadImage`, it is used as a fallback.
+Image Ledger prefers `LoadImage` nodes titled like “first frame”, “源图”, “原图”, or “首帧”, and ignores nodes titled like “last frame”, “mask”, “末帧”, or “遮罩”. If a workflow has only one active `LoadImage`, it is used as a fallback.
 
 ### Safe file handling
 

@@ -203,6 +203,7 @@ async def global_settings_handler(request: web.Request) -> web.Response:
 
 
 async def global_scan_handler(request: web.Request) -> web.Response:
+    from .global_settings import load_settings
     from .global_tracker import scan_existing_videos
 
     try:
@@ -212,8 +213,12 @@ async def global_scan_handler(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         body = {}
     try:
+        if "move" in body:
+            move = bool(body.get("move"))
+        else:
+            move = bool(load_settings().get("auto_move", False))
         payload = scan_existing_videos(
-            move=bool(body.get("move", True)),
+            move=move,
             limit=int(body.get("limit") or 0),
         )
         return web.json_response(payload)
@@ -238,6 +243,24 @@ async def global_undo_handler(request: web.Request) -> web.Response:
 
     try:
         payload = undo_last()
+        status = 200 if payload.get("ok") else 409
+        return web.json_response(payload, status=status)
+    except Exception as error:
+        traceback.print_exc()
+        return _json_error(f"Internal error: {error}", status=500)
+
+
+async def global_rerun_last_handler(request: web.Request) -> web.Response:
+    from .global_tracker import stage_last_run
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        payload = stage_last_run(str(body.get("path") or body.get("annotated") or ""))
         status = 200 if payload.get("ok") else 409
         return web.json_response(payload, status=status)
     except Exception as error:
@@ -392,6 +415,7 @@ def register_routes() -> None:
     routes.post("/image_ledger/global/scan")(global_scan_handler)
     routes.post("/image_ledger/global/relocate")(global_relocate_handler)
     routes.post("/image_ledger/global/undo")(global_undo_handler)
+    routes.post("/image_ledger/global/rerun_last")(global_rerun_last_handler)
     routes.post("/image_ledger/global/mark")(global_mark_handler)
     routes.post("/image_ledger/global/mark_poor")(global_mark_poor_handler)
     routes.post("/image_ledger/global/random_pick")(global_random_pick_handler)

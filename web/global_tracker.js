@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const STYLE_ID = "image_ledger-global-tracker-style-v4";
+const STYLE_ID = "image_ledger-global-tracker-style-v5";
 const PANEL_ID = "image_ledger-global-tracker-panel";
 const GALLERY_ID = "image_ledger-global-gallery";
 const SETTING_ENABLED = "ImageLedger.GlobalTracker.Enabled";
@@ -11,6 +11,7 @@ const SETTING_HIDE = "ImageLedger.GlobalTracker.HideUsed";
 let usedSet = new Set();
 let lastStatus = null;
 let lastPick = null;
+let lastUsedPath = "";
 let folderOptions = [];
 const FOLDER_KEY = "image_ledger.global.pickFolder";
 const IS_ZH = String(navigator.language || "").toLowerCase().startsWith("zh");
@@ -33,8 +34,9 @@ function setSelectedFolder(folder) {
 }
 
 function ensureStyle() {
-  const stale = document.getElementById("image_ledger-global-tracker-style");
-  if (stale) stale.remove();
+  for (const id of ["image_ledger-global-tracker-style", "image_ledger-global-tracker-style-v4"]) {
+    document.getElementById(id)?.remove();
+  }
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement("style");
   style.id = STYLE_ID;
@@ -76,6 +78,11 @@ function ensureStyle() {
       background: rgba(120, 50, 40, .95);
       border-color: rgba(255, 160, 120, .7);
       color: #ffe6d6;
+    }
+    #${PANEL_ID} button[data-rerun="1"] {
+      background: rgba(140, 100, 28, .95);
+      border-color: rgba(255, 210, 120, .8);
+      color: #fff4d0;
     }
     #${PANEL_ID} .image_ledger-global-toast { margin-top: 8px; color: #71e4a7; }
     #${PANEL_ID} .image_ledger-global-toast[data-kind="error"] { color: #ff9b9b; }
@@ -276,12 +283,15 @@ function sourceLoaders() {
   });
 }
 
+const PRIMARY_TITLE_RE = /first-frame-image|first-frame|first frame|首帧|选择源图|源图|原图/i;
+const SKIP_TITLE_RE = /last-frame-image|last-frame|last frame|末帧|尾帧|end-frame|end frame|mask|遮罩/i;
+
 function pickSourceNode() {
-  const loaders = sourceLoaders();
+  const loaders = sourceLoaders().filter((node) => !SKIP_TITLE_RE.test(String(node.title || "")));
   const scored = loaders.map((node) => {
     const title = String(node.title || "");
     let score = 0;
-    if (/选择源图|first-frame|首帧|原图/i.test(title)) score += 10;
+    if (PRIMARY_TITLE_RE.test(title)) score += 10;
     if (node.mode === 0) score += 1;
     return { node, score };
   });
@@ -343,10 +353,17 @@ function showPreview(pick) {
   pathLine.textContent = `${pick.selected || ""}${left}`;
 }
 
+function rememberUsedPath(item) {
+  if (!item || typeof item !== "object") return;
+  const next = String(item.moved_to || item.rel_path || "").trim();
+  if (next) lastUsedPath = next.replaceAll("\\", "/");
+}
+
 async function refreshStatus() {
   const data = await fetchJson("/image_ledger/global/status");
   lastStatus = data.status || {};
   applyUsedList(data.used || []);
+  if (!lastUsedPath && data.recent?.[0]) rememberUsedPath(data.recent[0]);
   renderPanel(data);
   if (lastPick) showPreview(lastPick);
   return data;
@@ -397,19 +414,25 @@ async function relocateUsed() {
 }
 
 async function scanHistory() {
+  const move = !!app.ui.settings.getSettingValue(SETTING_MOVE, false);
   toast(t("Scanning existing videos…", "正在扫描已有成片并分类，视频多时可能要几分钟…"));
   const data = await fetchJson("/image_ledger/global/scan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ move: true }),
+    body: JSON.stringify({ move }),
   });
   lastStatus = data.status || lastStatus;
   applyUsedList((await refreshStatus()).used);
   const relocated = data.relocated?.moved || 0;
-  toast(t(
-    `Scan complete: ${data.scanned} videos, ${data.marked} marked, ${relocated} moved.`,
-    `扫描完成：成片 ${data.scanned}，新标记 ${data.marked}，已分到 _used ${relocated} 张`,
-  ));
+  toast(move
+    ? t(
+      `Scan complete: ${data.scanned} videos, ${data.marked} marked, ${relocated} moved.`,
+      `扫描完成：成片 ${data.scanned}，新标记 ${data.marked}，已分到 _used ${relocated} 张`,
+    )
+    : t(
+      `Scan complete: ${data.scanned} videos, ${data.marked} marked. Sources were left in place.`,
+      `扫描完成：成片 ${data.scanned}，新标记 ${data.marked}。原图仍留在原处。`,
+    ));
 }
 
 async function undoLast() {
@@ -606,13 +629,25 @@ async function applyPickedToLoader(path) {
   if (!node || !widget) {
     throw new Error(t("No source LoadImage node was found in this workflow.", "当前工作流没有找到源图 LoadImage 节点。"));
   }
-  if (Array.isArray(widget.options?.values) && !widget.options.values.includes(path)) {
-    widget.options.values = [path, ...widget.options.values];
+  const values = Array.isArray(widget.options?.values) ? widget.options.values : [];
+  if (!values.includes(path)) {
+    widget.options = widget.options || {};
+    widget.options.values = [path, ...values];
   }
   widget.value = path;
   if (typeof widget.callback === "function") widget.callback(path);
   node.setDirtyCanvas?.(true, true);
   app.graph?.setDirtyCanvas?.(true, true);
+}
+
+async function queueCurrentPrompt() {
+  if (typeof app.queuePrompt === "function") {
+    await app.queuePrompt(0);
+    return;
+  }
+  const button = document.querySelector("#queue-button, button.queue-btn, .queue-button");
+  if (button) button.click();
+  else throw new Error(t("Queue button not found; use ComfyUI's Queue button.", "找不到 Queue 按钮，请手动点右上角 Queue。"));
 }
 
 async function runPicked() {
@@ -625,13 +660,33 @@ async function runPicked() {
   });
   await applyPickedToLoader(staged.load_name);
   toast(t(`Selected ${staged.source || path}; queueing…`, `已选中 ${staged.source || path}，开始排队…`));
-  if (typeof app.queuePrompt === "function") {
-    await app.queuePrompt(0);
-    return;
-  }
-  const button = document.querySelector("#queue-button, button.queue-btn, .queue-button");
-  if (button) button.click();
-  else throw new Error(t("Queue button not found; use ComfyUI's Queue button.", "找不到 Queue 按钮，请手动点右上角 Queue。"));
+  await queueCurrentPrompt();
+}
+
+async function rerunLast() {
+  const hint = lastUsedPath || lastPick?.selected || currentImagePath();
+  const staged = await fetchJson("/image_ledger/global/rerun_last", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: hint || "" }),
+  });
+  const path = staged.load_name || staged.source;
+  if (!path) throw new Error(t("The previous source has no usable path.", "上一张原图没有可用路径。"));
+  lastUsedPath = path;
+  const parts = String(path).split("/").filter(Boolean);
+  const skip = new Set(["_used", "_rejected", "效果不佳"]);
+  const dirs = parts.slice(0, -1).filter((part) => !skip.has(part.toLowerCase()));
+  const folder = dirs.length >= 2 && dirs[0].toLowerCase() === "ai" ? `${dirs[0]}/${dirs[1]}` : (selectedFolder() || lastPick?.folder || "");
+  if (folder) setSelectedFolder(folder);
+  lastPick = {
+    selected: path,
+    folder,
+    image: staged.image,
+  };
+  showPreview(lastPick);
+  await applyPickedToLoader(path);
+  toast(t(`Rerunning ${path}; queueing…`, `重跑上一张：${path}，开始排队…`));
+  await queueCurrentPrompt();
 }
 
 async function markPoor() {
@@ -648,6 +703,10 @@ async function markPoor() {
 function renderPanel(data) {
   ensureStyle();
   let panel = document.getElementById(PANEL_ID);
+  if (panel && !panel.querySelector("[data-act=rerun]")) {
+    panel.remove();
+    panel = null;
+  }
   if (!panel) {
     panel = document.createElement("div");
     panel.id = PANEL_ID;
@@ -664,6 +723,7 @@ function renderPanel(data) {
         <button data-act="pick">${t("Random pick", "随机抽一张")}</button>
         <button data-act="skip">${t("Another", "换一张")}</button>
         <button data-act="run" data-primary="1">${t("Run this", "用这张跑")}</button>
+        <button data-act="rerun" data-rerun="1">${t("Rerun last", "重跑上一张")}</button>
         <button data-act="poor" data-warn="1">${t("Reject", "效果不佳")}</button>
       </div>
       <div class="image_ledger-preview-wrap">
@@ -698,6 +758,7 @@ function renderPanel(data) {
         if (button.dataset.act === "pick") await randomPick(true);
         if (button.dataset.act === "skip") await randomPick(true);
         if (button.dataset.act === "run") await runPicked();
+        if (button.dataset.act === "rerun") await rerunLast();
         if (button.dataset.act === "poor") await markPoor();
         if (button.dataset.act === "relocate") await relocateUsed();
         if (button.dataset.act === "scan") await scanHistory();
@@ -724,22 +785,30 @@ function renderPanel(data) {
 function decorateLoadImageWidgets(node) {
   if (!node?.widgets) return;
   const hide = app.ui.settings.getSettingValue(SETTING_HIDE, true);
+  const donePrefix = /^\[(?:done|已跑)\]\s*/i;
   for (const widget of node.widgets) {
     if (!widget || widget.name !== "image" || !Array.isArray(widget.options?.values)) continue;
     const raw = widget.options.values;
+    const current = String(widget.value || "").replace(donePrefix, "").replaceAll("\\", "/");
     const next = [];
     for (const value of raw) {
       const text = String(value);
-      const clean = text.replace(/^\[(?:done|已跑)\]\s*/i, "");
+      const clean = text.replace(donePrefix, "");
       const used = isUsedName(clean);
-      if (used && hide) continue;
-      next.push(used ? `[${t("done", "已跑")}] ${clean}` : clean);
+      const isCurrent = clean.replaceAll("\\", "/") === current;
+      if (used && hide && !isCurrent) continue;
+      next.push(used && !isCurrent ? `[${t("done", "已跑")}] ${clean}` : clean);
+    }
+    if (current && !next.some((value) => String(value).replace(donePrefix, "").replaceAll("\\", "/") === current)) {
+      next.unshift(current);
     }
     widget.options.values = next;
-    if (typeof widget.value === "string" && isUsedName(widget.value.replace(/^\[(?:done|已跑)\]\s*/i, ""))) {
-      if (hide && next.length) widget.value = next[0];
-      else if (!hide && !/^\[(?:done|已跑)\]/i.test(String(widget.value))) {
-        widget.value = `[${t("done", "已跑")}] ${widget.value.replace(/^\[(?:done|已跑)\]\s*/i, "")}`;
+    if (typeof widget.value === "string" && isUsedName(widget.value.replace(donePrefix, ""))) {
+      if (current && next.some((value) => String(value).replace(donePrefix, "").replaceAll("\\", "/") === current)) {
+        widget.value = current;
+      } else if (hide && next.length) widget.value = next[0];
+      else if (!hide && !donePrefix.test(String(widget.value))) {
+        widget.value = `[${t("done", "已跑")}] ${widget.value.replace(donePrefix, "")}`;
       }
     }
   }
@@ -787,6 +856,11 @@ app.registerExtension({
       function: () => undoLast().catch((error) => toast(String(error.message || error), "error")),
     },
     {
+      id: "image_ledger.global.rerun",
+      label: t("Image Ledger: rerun last image", "重跑上一张已跑原图"),
+      function: () => rerunLast().catch((error) => toast(String(error.message || error), "error")),
+    },
+    {
       id: "image_ledger.global.pick",
       label: t("Image Ledger: random pick", "从当前文件夹随机抽一张原图"),
       function: () => randomPick(true).catch((error) => toast(String(error.message || error), "error")),
@@ -808,14 +882,16 @@ app.registerExtension({
     }
     api.addEventListener("image_ledger_global_used", async (event) => {
       const payload = event.detail || {};
-      const names = (payload.marked || []).map((item) => item.rel_path).filter(Boolean);
+      const marked = payload.marked || [];
+      if (marked[0]) rememberUsedPath(marked[0]);
+      const names = marked.map((item) => item.rel_path).filter(Boolean);
       try {
         await refreshStatus();
       } catch (_) {
         /* keep previous */
       }
       if (names.length) {
-        const moved = (payload.marked || []).some((item) => item.moved);
+        const moved = marked.some((item) => item.moved);
         toast(t(
           `Tracked: ${names.join(", ")}${moved ? "; moved to _used" : ""}`,
           `已记录：${names.join("、")}${moved ? "，并已移到 _used" : ""}`,

@@ -112,7 +112,8 @@ class PluginImportTests(unittest.TestCase):
         self.assertIn("ImageLedger_SimpleTrackedImageLoader", module.NODE_CLASS_MAPPINGS)
         self.assertIn(("GET", "/image_ledger/global/status"), self.routes.paths)
         self.assertIn(("POST", "/image_ledger/global/stage"), self.routes.paths)
-        self.assertEqual(len(self.routes.paths), 13)
+        self.assertIn(("POST", "/image_ledger/global/rerun_last"), self.routes.paths)
+        self.assertEqual(len(self.routes.paths), 14)
 
 
 if __name__ == "__main__":

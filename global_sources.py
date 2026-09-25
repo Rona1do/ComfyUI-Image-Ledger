@@ -46,6 +46,8 @@ PRIMARY_TITLE_NEEDLES = (
     "first frame",
     "首帧",
     "选择源图",
+    "源图",
+    "原图",
 )
 SKIP_TITLE_NEEDLES = (
     "last-frame-image",

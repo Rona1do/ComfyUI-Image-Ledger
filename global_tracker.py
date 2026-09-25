@@ -475,6 +475,14 @@ def _locate_existing(annotated: str, input_root: Path, used_dirname: str, poor_d
         guesses.append(poor_destination(raw, used_dirname, poor_dirname))
     except ValueError:
         pass
+    name = Path(raw).name
+    preferred = (_LAST_PICK_FOLDER or "").replace("\\", "/").strip("/")
+    if preferred and name:
+        guesses.append(f"{preferred}/{used_dirname}/{name}")
+        guesses.append(f"{preferred}/{used_dirname}/{poor_dirname}/{name}")
+        # Pre-release builds archived rejects in _used/效果不佳.
+        if poor_dirname.casefold() != "效果不佳":
+            guesses.append(f"{preferred}/{used_dirname}/效果不佳/{name}")
     seen: set[str] = set()
     for guess in guesses:
         key = guess.replace("\\", "/").strip("/")
@@ -490,6 +498,102 @@ def _locate_existing(annotated: str, input_root: Path, used_dirname: str, poor_d
     return _resolve_source(raw, input_root)
 
 
+def _as_input_relative(hint: str, input_root: Path) -> str:
+    """Return an input-relative path. Absolute paths outside input are dropped."""
+    text = str(hint or "").strip().strip('"').strip("'")
+    if not text:
+        return ""
+    candidate = Path(text)
+    drive_absolute = len(text) >= 2 and text[1] == ":"
+    if candidate.is_absolute() or drive_absolute:
+        try:
+            root = Path(os.path.abspath(str(input_root)))
+            resolved = Path(os.path.abspath(str(candidate)))
+            return resolved.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            return ""
+    return text.replace("\\", "/").strip("/")
+
+
+def _path_hints(*groups: Any) -> list[str]:
+    hints: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        if group is None or group == "":
+            continue
+        if isinstance(group, dict):
+            values = [
+                group.get("moved_to"),
+                group.get("rel_path"),
+                group.get("abs_path"),
+                group.get("annotated"),
+                group.get("source"),
+                group.get("load_name"),
+                group.get("selected"),
+            ]
+        elif isinstance(group, (list, tuple)):
+            values = list(group)
+        else:
+            values = [group]
+        for value in values:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            hints.append(text)
+    return hints
+
+
+def stage_last_run(path_hint: str = "") -> dict[str, Any]:
+    """Point LoadImage at the last recorded source, including files already in _used."""
+    global _LAST_PICK_FOLDER
+    cfg = load_settings()
+    input_root = _input_root()
+    used_dirname = str(cfg.get("used_dirname") or "_used")
+    poor_dirname = str(cfg.get("poor_dirname") or POOR_DIRNAME)
+
+    last = last_result() or {}
+    marked = list(last.get("marked") or [])
+    try:
+        event = _ledger().last_global_event(GLOBAL_CAMPAIGN)
+    except Exception:
+        event = None
+
+    if not _LAST_PICK_FOLDER and isinstance(event, dict):
+        category = category_folder_of(
+            str(event.get("moved_to") or event.get("rel_path") or ""),
+            used_dirname,
+            poor_dirname,
+        )
+        if category:
+            _LAST_PICK_FOLDER = category
+
+    for hint in _path_hints(path_hint, *marked, event, _CURRENT_PICK):
+        relative = _as_input_relative(hint, input_root)
+        if not relative:
+            continue
+        located = _locate_existing(relative, input_root, used_dirname, poor_dirname)
+        if located is None:
+            continue
+        staged = stage_for_loadimage(located[0])
+        if not staged.get("ok"):
+            continue
+        load_name = str(staged.get("load_name") or located[0]).replace("\\", "/")
+        staged["rerun"] = True
+        staged["from_used"] = any(
+            part.casefold() == used_dirname.casefold() for part in load_name.split("/")
+        )
+        staged["message"] = f"Rerun last image: {load_name}"
+        return staged
+    return {
+        "ok": False,
+        "error": (
+            "No previous source image was found. Run one first, or check that it "
+            "is still in that category's _used folder."
+        ),
+    }
+
+
 def mark_poor_quality(annotated: str = "") -> dict[str, Any]:
     cfg = load_settings()
     input_root = _input_root()
@@ -500,7 +604,10 @@ def mark_poor_quality(annotated: str = "") -> dict[str, Any]:
     if not path_hint:
         event = ledger.last_global_event(GLOBAL_CAMPAIGN) or {}
         path_hint = str(event.get("moved_to") or event.get("rel_path") or event.get("abs_path") or "")
-    located = _locate_existing(path_hint, input_root, used_dirname, poor_dirname)
+    relative = _as_input_relative(path_hint, input_root)
+    located = (
+        _locate_existing(relative, input_root, used_dirname, poor_dirname) if relative else None
+    )
     if located is None:
         return {"ok": False, "error": "No source image is available to reject."}
     rel_path, abs_path = located
@@ -945,7 +1052,7 @@ def relocate_recorded(*, force_move: bool = True) -> dict[str, Any]:
 
 def scan_existing_videos(
     *,
-    move: bool = True,
+    move: bool = False,
     limit: int = 0,
 ) -> dict[str, Any]:
     from .history import discover_videos, find_ffmpeg, read_video_metadata

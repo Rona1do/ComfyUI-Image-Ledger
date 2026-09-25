@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import tempfile
 import types
@@ -23,6 +24,13 @@ Ledger = ledger_module.Ledger
 
 
 class SourcePickerTests(unittest.TestCase):
+    def test_source_title_matches_panel_language(self):
+        self.assertTrue(sources.is_primary_title("源图"))
+        self.assertTrue(sources.is_primary_title("原图"))
+        self.assertTrue(sources.is_primary_title("First Frame"))
+        self.assertTrue(sources.is_skip_title("Last Frame"))
+        self.assertTrue(sources.is_skip_title("遮罩"))
+
     def test_prefers_first_frame_and_skips_last_frame(self):
         prompt = {
             "23": {
@@ -289,6 +297,143 @@ class GlobalLedgerTests(unittest.TestCase):
         self.assertIn("a.png", names)
         self.assertNotIn("old.png", names)
         self.assertNotIn("old2.png", names)
+
+
+class StageLastRunTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.input_root = Path(self.temp.name) / "input"
+        self.category = "AI/portraits"
+        used = self.input_root / "AI" / "portraits" / "_used"
+        used.mkdir(parents=True)
+        self.filename = "ComfyUI_temp_kkavg_00132_.png"
+        self.used_file = used / self.filename
+        self.used_file.write_bytes(b"payload-132")
+        self.tracker = importlib.import_module(f"{PACKAGE_NAME}.global_tracker")
+        self._orig_input_root = self.tracker._input_root
+        self._orig_ledger = self.tracker._ledger
+        self._orig_last_result = self.tracker._LAST_RESULT
+        self._orig_pick_folder = self.tracker._LAST_PICK_FOLDER
+        self._orig_current_pick = self.tracker._CURRENT_PICK
+        self._orig_data_dir = os.environ.get("COMFYUI_IMAGE_LEDGER_DIR")
+        os.environ["COMFYUI_IMAGE_LEDGER_DIR"] = str(Path(self.temp.name) / "ledger-data")
+        self.tracker._input_root = lambda: self.input_root
+        self.db = Path(self.temp.name) / "ledger.sqlite3"
+        self.ledger = Ledger(self.db, session_id="rerun-test")
+        self.tracker._ledger = lambda: self.ledger
+        self.tracker._LAST_RESULT = None
+        self.tracker._LAST_PICK_FOLDER = self.category
+        self.tracker._CURRENT_PICK = ""
+
+    def tearDown(self):
+        self.tracker._input_root = self._orig_input_root
+        self.tracker._ledger = self._orig_ledger
+        self.tracker._LAST_RESULT = self._orig_last_result
+        self.tracker._LAST_PICK_FOLDER = self._orig_pick_folder
+        self.tracker._CURRENT_PICK = self._orig_current_pick
+        if self._orig_data_dir is None:
+            os.environ.pop("COMFYUI_IMAGE_LEDGER_DIR", None)
+        else:
+            os.environ["COMFYUI_IMAGE_LEDGER_DIR"] = self._orig_data_dir
+        self.temp.cleanup()
+
+    def _record_used(self):
+        self.ledger.upsert_done_source(
+            campaign=settings_module.GLOBAL_CAMPAIGN,
+            sha256="c" * 64,
+            rel_path=f"{self.category}/{self.filename}",
+            abs_path=str(self.used_file),
+            source_root=str(self.input_root),
+            moved_to=f"{self.category}/_used/{self.filename}",
+        )
+
+    def test_locate_existing_finds_used_copy(self):
+        located = self.tracker._locate_existing(
+            f"{self.category}/{self.filename}",
+            self.input_root,
+            "_used",
+            "_rejected",
+        )
+        self.assertIsNotNone(located)
+        self.assertEqual(
+            located[0].replace("\\", "/"),
+            f"{self.category}/_used/{self.filename}",
+        )
+
+    def test_locate_existing_finds_used_copy_from_basename(self):
+        located = self.tracker._locate_existing(
+            self.filename,
+            self.input_root,
+            "_used",
+            "_rejected",
+        )
+        self.assertIsNotNone(located)
+        self.assertEqual(
+            located[0].replace("\\", "/"),
+            f"{self.category}/_used/{self.filename}",
+        )
+
+    def test_locate_existing_finds_legacy_rejected_folder(self):
+        legacy = self.input_root / "AI" / "portraits" / "_used" / "效果不佳"
+        legacy.mkdir()
+        (legacy / "old.png").write_bytes(b"old")
+        located = self.tracker._locate_existing(
+            "old.png",
+            self.input_root,
+            "_used",
+            "_rejected",
+        )
+        self.assertIsNotNone(located)
+        self.assertEqual(
+            located[0].replace("\\", "/"),
+            "AI/portraits/_used/效果不佳/old.png",
+        )
+
+    def test_stage_last_run_from_ledger_moved_to(self):
+        self.tracker._LAST_PICK_FOLDER = ""
+        self._record_used()
+        result = self.tracker.stage_last_run()
+        self.assertTrue(result.get("ok"), result)
+        self.assertTrue(result.get("rerun"))
+        self.assertTrue(result.get("from_used"))
+        self.assertEqual(
+            str(result.get("load_name") or "").replace("\\", "/"),
+            f"{self.category}/_used/{self.filename}",
+        )
+        self.assertTrue(self.used_file.is_file())
+
+    def test_stage_last_run_ignores_missing_hint(self):
+        self._record_used()
+        result = self.tracker.stage_last_run("missing.png")
+        self.assertTrue(result.get("ok"), result)
+        self.assertEqual(
+            str(result.get("load_name") or "").replace("\\", "/"),
+            f"{self.category}/_used/{self.filename}",
+        )
+
+    def test_stage_last_run_accepts_absolute_path_inside_input(self):
+        result = self.tracker.stage_last_run(str(self.used_file))
+        self.assertTrue(result.get("ok"), result)
+        self.assertEqual(
+            str(result.get("load_name") or "").replace("\\", "/"),
+            f"{self.category}/_used/{self.filename}",
+        )
+
+    def test_stage_last_run_rejects_path_outside_input(self):
+        outside = Path(self.temp.name) / "secret.png"
+        outside.write_bytes(b"secret")
+        result = self.tracker.stage_last_run(str(outside))
+        self.assertFalse(result.get("ok"))
+        self.assertNotIn("secret.png", str(result.get("load_name") or ""))
+        result = self.tracker.stage_last_run("../secret.png")
+        self.assertFalse(result.get("ok"))
+        self.assertNotIn("secret.png", str(result.get("load_name") or ""))
+
+    def test_stage_last_run_without_history(self):
+        self.tracker._LAST_PICK_FOLDER = ""
+        result = self.tracker.stage_last_run()
+        self.assertFalse(result.get("ok"))
+        self.assertIn("error", result)
 
 
 if __name__ == "__main__":
