@@ -7,25 +7,44 @@ const GALLERY_ID = "image_ledger-global-gallery";
 const SETTING_ENABLED = "ImageLedger.GlobalTracker.Enabled";
 const SETTING_MOVE = "ImageLedger.GlobalTracker.AutoMove";
 const SETTING_HIDE = "ImageLedger.GlobalTracker.HideUsed";
+const SETTING_LIBRARY = "ImageLedger.GlobalTracker.LibraryFolder";
 
 let usedSet = new Set();
 let lastStatus = null;
+let lastSettings = null;
 let lastPick = null;
 let lastUsedPath = "";
 let folderOptions = [];
 const FOLDER_KEY = "image_ledger.global.pickFolder";
+const COLLAPSED_KEY = "image_ledger.global.collapsed";
 const IS_ZH = String(navigator.language || "").toLowerCase().startsWith("zh");
 const t = (en, zh) => (IS_ZH ? zh : en);
+
+function readLocal(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function writeLocal(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (_) {
+    /* storage unavailable; the panel still works for this session */
+  }
+}
 
 function selectedFolder() {
   const panel = document.getElementById(PANEL_ID);
   const select = panel?.querySelector("select[data-role=folder]");
-  return String(select?.value || localStorage.getItem(FOLDER_KEY) || "").trim();
+  return String(select?.value || readLocal(FOLDER_KEY)).trim();
 }
 
 function setSelectedFolder(folder) {
   if (!folder) return;
-  localStorage.setItem(FOLDER_KEY, folder);
+  writeLocal(FOLDER_KEY, folder);
   const panel = document.getElementById(PANEL_ID);
   const select = panel?.querySelector("select[data-role=folder]");
   if (select && [...select.options].some((opt) => opt.value === folder)) {
@@ -95,6 +114,8 @@ function ensureStyle() {
       color: #9cc7df;
       padding: 2px 6px;
     }
+    #${PANEL_ID}[data-collapsed="1"] { width: auto; padding: 8px 40px 8px 12px; }
+    #${PANEL_ID}[data-collapsed="1"] > :not(strong):not(.image_ledger-global-close) { display: none; }
     #${PANEL_ID} .image_ledger-preview-wrap {
       margin: 8px 0;
       min-height: 120px;
@@ -362,6 +383,7 @@ function rememberUsedPath(item) {
 async function refreshStatus() {
   const data = await fetchJson("/image_ledger/global/status");
   lastStatus = data.status || {};
+  lastSettings = data.settings || lastSettings;
   applyUsedList(data.used || []);
   if (!lastUsedPath && data.recent?.[0]) rememberUsedPath(data.recent[0]);
   renderPanel(data);
@@ -386,6 +408,7 @@ async function syncSettingsToBackend() {
   const enabled = app.ui.settings.getSettingValue(SETTING_ENABLED, true);
   const autoMove = app.ui.settings.getSettingValue(SETTING_MOVE, false);
   const hideUsed = app.ui.settings.getSettingValue(SETTING_HIDE, true);
+  const library = String(app.ui.settings.getSettingValue(SETTING_LIBRARY, "AI") || "").trim() || "AI";
   await fetchJson("/image_ledger/global/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -393,6 +416,7 @@ async function syncSettingsToBackend() {
       enabled,
       auto_move: autoMove,
       hide_used_in_picker: hideUsed,
+      library_folder: library,
     }),
   });
   const panel = document.getElementById(PANEL_ID);
@@ -400,6 +424,11 @@ async function syncSettingsToBackend() {
 }
 
 async function relocateUsed() {
+  const ok = window.confirm(t(
+    "Move every tracked source image into its category's _used folder now? This moves files on disk even when \"Move source\" is off. You can undo only the latest record.",
+    "现在把所有已记账的原图移动到各分类的 _used 文件夹吗？即使没开「移动原图」也会实际移动文件，撤回只能撤最近一条。",
+  ));
+  if (!ok) return;
   toast(t("Moving tracked sources into their _used folders…", "正在把已记账原图分到各分类自己的 _used …"));
   const data = await fetchJson("/image_ledger/global/relocate", {
     method: "POST",
@@ -485,8 +514,15 @@ function pickFromList(item) {
   toast(t(`Selected ${item.path}. Run it when ready.`, `已指定 ${item.path}，点「用这张跑」`));
 }
 
+function onGalleryKey(event) {
+  if (event.key !== "Escape") return;
+  event.stopPropagation();
+  closeGallery();
+}
+
 function closeGallery() {
   document.getElementById(GALLERY_ID)?.remove();
+  document.removeEventListener("keydown", onGalleryKey, true);
 }
 
 function selectGalleryItem(item, card, gal) {
@@ -521,7 +557,7 @@ async function openGallery() {
   count.style.cssText = "color:#9cc7df;font:13px system-ui,sans-serif;";
   count.textContent = t("Loading…", "加载中…");
   const closeBtn = document.createElement("div");
-  closeBtn.textContent = t("Close", "关闭");
+  closeBtn.textContent = t("Close (Esc)", "关闭 (Esc)");
   closeBtn.style.cssText = "margin-left:auto;padding:8px 14px;background:#1c3c5c;color:#fff;border-radius:8px;cursor:pointer;font:600 13px system-ui,sans-serif;";
   closeBtn.addEventListener("click", closeGallery);
   bar.append(title, count, closeBtn);
@@ -563,6 +599,7 @@ async function openGallery() {
   body.append(grid, detail);
   gal.append(bar, body);
   document.body.appendChild(gal);
+  document.addEventListener("keydown", onGalleryKey, true);
 
   const params = new URLSearchParams({ folder, limit: "2000" });
   let data;
@@ -574,7 +611,7 @@ async function openGallery() {
     return;
   }
   const items = data.items || [];
-  count.textContent = t(`${items.length} available (_used excluded)`, `${items.length} 张待选（已排除 _used）`);
+  count.textContent = t(`${items.length} pending (completed images excluded)`, `${items.length} 张待选（已排除跑过的原图）`);
   if (!items.length) {
     grid.textContent = t("No pending images in this category.", "这个分类没有待选原图");
     return;
@@ -606,7 +643,7 @@ function fillFolderSelect(folders, preferred) {
   const panel = document.getElementById(PANEL_ID);
   const select = panel?.querySelector("select[data-role=folder]");
   if (!select) return;
-  const want = preferred || localStorage.getItem(FOLDER_KEY) || "";
+  const want = preferred || readLocal(FOLDER_KEY);
   select.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -621,6 +658,7 @@ function fillFolderSelect(folders, preferred) {
   if (want && [...select.options].some((opt) => opt.value === want)) {
     select.value = want;
   }
+  renderStats(panel);
 }
 
 async function applyPickedToLoader(path) {
@@ -673,10 +711,7 @@ async function rerunLast() {
   const path = staged.load_name || staged.source;
   if (!path) throw new Error(t("The previous source has no usable path.", "上一张原图没有可用路径。"));
   lastUsedPath = path;
-  const parts = String(path).split("/").filter(Boolean);
-  const skip = new Set(["_used", "_rejected", "效果不佳"]);
-  const dirs = parts.slice(0, -1).filter((part) => !skip.has(part.toLowerCase()));
-  const folder = dirs.length >= 2 && dirs[0].toLowerCase() === "ai" ? `${dirs[0]}/${dirs[1]}` : (selectedFolder() || lastPick?.folder || "");
+  const folder = staged.folder || selectedFolder() || lastPick?.folder || "";
   if (folder) setSelectedFolder(folder);
   lastPick = {
     selected: path,
@@ -703,7 +738,7 @@ async function markPoor() {
 function renderPanel(data) {
   ensureStyle();
   let panel = document.getElementById(PANEL_ID);
-  if (panel && !panel.querySelector("[data-act=rerun]")) {
+  if (panel && !panel.querySelector("[data-role=toggle]")) {
     panel.remove();
     panel = null;
   }
@@ -711,7 +746,7 @@ function renderPanel(data) {
     panel = document.createElement("div");
     panel.id = PANEL_ID;
     panel.innerHTML = `
-      <button class="image_ledger-global-close" title="${t("Hide", "暂时隐藏")}">×</button>
+      <button class="image_ledger-global-close" data-role="toggle"></button>
       <strong>${t("Global Image Ledger", "全局原图台账")}</strong>
       <div class="image_ledger-global-row" data-role="stats">${t("Loading…", "加载中…")}</div>
       <div class="image_ledger-folder-row">
@@ -738,13 +773,17 @@ function renderPanel(data) {
       <div class="image_ledger-global-toast"></div>
     `;
     document.body.appendChild(panel);
-    panel.querySelector(".image_ledger-global-close").addEventListener("click", () => {
-      panel.style.display = "none";
+    setCollapsed(panel, readLocal(COLLAPSED_KEY) === "1");
+    panel.querySelector("[data-role=toggle]").addEventListener("click", () => {
+      const collapsed = panel.dataset.collapsed !== "1";
+      setCollapsed(panel, collapsed);
+      writeLocal(COLLAPSED_KEY, collapsed ? "1" : "0");
     });
     panel.querySelector("select[data-role=folder]").addEventListener("change", (event) => {
       setSelectedFolder(event.target.value);
       lastPick = null;
       showPreview(null);
+      renderStats(panel);
       toast(event.target.value
         ? t(`Category set to ${event.target.value}.`, `已锁定 ${event.target.value}，点「浏览大图选图」`)
         : t("Select a category.", "请选定分类"));
@@ -772,14 +811,39 @@ function renderPanel(data) {
   }
   const enabled = app.ui.settings.getSettingValue(SETTING_ENABLED, true);
   panel.style.display = enabled ? "block" : "none";
-  const status = data?.status || lastStatus || {};
-  const done = Number(status.done || 0);
-  panel.querySelector("[data-role=stats]").textContent =
-    t(
+  if (data?.folders) fillFolderSelect(data.folders, selectedFolder());
+  renderStats(panel);
+}
+
+function setCollapsed(panel, collapsed) {
+  panel.dataset.collapsed = collapsed ? "1" : "0";
+  const toggle = panel.querySelector("[data-role=toggle]");
+  toggle.textContent = collapsed ? "+" : "–";
+  toggle.title = collapsed ? t("Expand", "展开") : t("Collapse", "收起");
+}
+
+function renderStats(panel) {
+  const line = panel?.querySelector("[data-role=stats]");
+  if (!line) return;
+  const done = Number(lastStatus?.done || 0);
+  const folder = folderOptions.find((item) => item.path === selectedFolder());
+  if (folder) {
+    line.textContent = t(
+      `${done} completed in total · ${folder.pending} pending in ${folder.name}`,
+      `累计已跑 ${done} 张 · ${folder.name} 还剩 ${folder.pending} 张`,
+    );
+  } else if (!folderOptions.length) {
+    const library = String(lastSettings?.library_folder || "AI");
+    line.textContent = t(
+      `${done} completed. No category folders found under input/${library}. Add folders there or change the library in Settings → Image Ledger.`,
+      `已跑 ${done} 张。input/${library} 下还没有分类文件夹。请在那里建分类文件夹，或到 设置 → Image Ledger 修改图库目录。`,
+    );
+  } else {
+    line.textContent = t(
       `${done} completed. Select a category, then open the gallery or pick randomly.`,
       `已跑 ${done} 张。先选定分类，再点「浏览大图选图」看图挑选。`,
     );
-  if (data?.folders) fillFolderSelect(data.folders, selectedFolder());
+  }
 }
 
 function decorateLoadImageWidgets(node) {
@@ -827,12 +891,28 @@ app.registerExtension({
       onChange: () => { syncSettingsToBackend().catch(() => {}); },
     },
     {
+      id: SETTING_LIBRARY,
+      name: t("Source library folder (under ComfyUI/input)", "原图图库目录（位于 ComfyUI/input 下）"),
+      type: "text",
+      defaultValue: "AI",
+      category: ["Image Ledger", "Global tracking", "Library folder"],
+      tooltip: t(
+        "Each subfolder is one category. AI means ComfyUI/input/AI. A directory link placed here can point to another drive.",
+        "每个子文件夹是一个分类。AI 表示 ComfyUI/input/AI。这里可以放一个目录链接，指向其他磁盘上的图库。",
+      ),
+      onChange: () => {
+        syncSettingsToBackend()
+          .then(() => (document.getElementById(PANEL_ID) ? refreshStatus() : null))
+          .catch(() => {});
+      },
+    },
+    {
       id: SETTING_MOVE,
       name: t("Move source to _used after success", "成片后把原图移到 _used 文件夹"),
       type: "boolean",
       defaultValue: false,
       category: ["Image Ledger", "Global tracking", "Move source"],
-      tooltip: t("Opt-in file move: input/AI/portraits/1.png → input/AI/portraits/_used/1.png.", "选择性移动文件：input/AI/角色/1.png → input/AI/角色/_used/1.png。"),
+      tooltip: t("Opt-in file move: input/AI/portraits/1.png → input/AI/portraits/_used/1.png. When off, completed images stay in place and are still excluded from the gallery and random pick.", "选择性移动文件：input/AI/角色/1.png → input/AI/角色/_used/1.png。关闭时原图留在原处，但浏览和随机抽仍会排除已跑过的图。"),
       onChange: () => { syncSettingsToBackend().catch(() => {}); },
     },
     {

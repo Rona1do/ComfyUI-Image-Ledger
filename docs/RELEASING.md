@@ -6,5 +6,5 @@
 4. Update both READMEs, `CHANGELOG.md`, and the version in `pyproject.toml`.
 5. Commit with `release: vX.Y.Z` and create an annotated `vX.Y.Z` tag.
 6. Create a GitHub release using the changelog section and attach no private runtime data.
-7. After obtaining a ComfyUI Registry publisher ID and API key, add the required `[tool.comfy]` metadata and a separate registry publish workflow.
+7. Pushing the version change in `pyproject.toml` to `main` publishes to the ComfyUI Registry through `.github/workflows/publish.yml`. This needs the `REGISTRY_ACCESS_TOKEN` repository secret.
 8. Monitor issues after release and document compatibility findings.

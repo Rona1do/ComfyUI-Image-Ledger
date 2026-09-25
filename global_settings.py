@@ -10,10 +10,13 @@ from typing import Any
 GLOBAL_CAMPAIGN = "__global__"
 USED_DIRNAME = "_used"
 POOR_DIRNAME = "_rejected"
+LIBRARY_FOLDER = "AI"
 SETTINGS_NAME = "settings.json"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "enabled": True,
+    # Source library under ComfyUI/input. Each first-level folder is a category.
+    "library_folder": LIBRARY_FOLDER,
     # Tracking is safe by default. Moving source files requires explicit opt-in.
     "auto_move": False,
     "hide_used_in_picker": True,
@@ -58,12 +61,30 @@ def ledger_db_path() -> Path:
     return profile_data_root() / "ledger.sqlite3"
 
 
+def normalize_library_folder(value: Any) -> str:
+    """Input-relative library folder, or "" when the value is unsafe or empty."""
+    text = str(value or "").strip().replace("\\", "/").strip("/")
+    parts = [part.strip() for part in text.split("/") if part.strip() not in ("", ".")]
+    if not parts or any(part == ".." for part in parts) or ":" in parts[0]:
+        return ""
+    return "/".join(parts)
+
+
+def library_folder(settings: dict[str, Any] | None = None) -> str:
+    cfg = settings if settings is not None else load_settings()
+    return normalize_library_folder(cfg.get("library_folder")) or LIBRARY_FOLDER
+
+
 def normalize_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
     data = deepcopy(DEFAULT_SETTINGS)
     if not isinstance(raw, dict):
         return data
     if "enabled" in raw:
         data["enabled"] = bool(raw["enabled"])
+    if "library_folder" in raw:
+        folder = normalize_library_folder(raw["library_folder"])
+        if folder:
+            data["library_folder"] = folder
     if "auto_move" in raw:
         data["auto_move"] = bool(raw["auto_move"])
     if "hide_used_in_picker" in raw:

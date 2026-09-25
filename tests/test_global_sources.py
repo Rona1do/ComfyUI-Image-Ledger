@@ -435,6 +435,179 @@ class StageLastRunTests(unittest.TestCase):
         self.assertFalse(result.get("ok"))
         self.assertIn("error", result)
 
+    def test_stage_last_run_returns_category(self):
+        self._record_used()
+        result = self.tracker.stage_last_run()
+        self.assertTrue(result.get("ok"), result)
+        self.assertEqual(result.get("folder"), self.category)
+
+
+class LibraryFolderTests(unittest.TestCase):
+    def test_normalize_library_folder(self):
+        normalize = settings_module.normalize_library_folder
+        self.assertEqual(normalize("AI"), "AI")
+        self.assertEqual(normalize("\\Pictures\\AI\\"), "Pictures/AI")
+        self.assertEqual(normalize("./Sources/./set"), "Sources/set")
+        self.assertEqual(normalize("../outside"), "")
+        self.assertEqual(normalize("C:/Users"), "")
+        self.assertEqual(normalize(""), "")
+
+    def test_unsafe_library_setting_keeps_default(self):
+        cfg = settings_module.normalize_settings({"library_folder": "../../etc"})
+        self.assertEqual(cfg["library_folder"], "AI")
+        cfg = settings_module.normalize_settings({"library_folder": "Sources"})
+        self.assertEqual(settings_module.library_folder(cfg), "Sources")
+
+    def test_category_for_custom_and_nested_library(self):
+        category = sources.category_folder_of
+        self.assertEqual(category("Sources/cats/1.png", library_folder="Sources"), "Sources/cats")
+        self.assertEqual(category("Sources/cats/_used/1.png", library_folder="Sources"), "Sources/cats")
+        self.assertEqual(category("AI/cats/1.png", library_folder="Sources"), "")
+        self.assertEqual(category("Pics/AI/cats/deep/1.png", library_folder="Pics/AI"), "Pics/AI/cats")
+        self.assertEqual(category("Pics/AI/1.png", library_folder="Pics/AI"), "")
+
+    def test_is_library_rel(self):
+        self.assertTrue(sources.is_library_rel("Sources/cats/1.png", "Sources"))
+        self.assertTrue(sources.is_library_rel("sources/cats/1.png", "Sources"))
+        self.assertFalse(sources.is_library_rel("SourcesExtra/1.png", "Sources"))
+        self.assertFalse(sources.is_library_rel("1.png", "Sources"))
+
+
+class GlobalPickTests(unittest.TestCase):
+    """Gallery and random pick with a custom library and move-on-success off."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.input_root = Path(self.temp.name) / "input"
+        self.cats = self.input_root / "Sources" / "cats"
+        self.cats.mkdir(parents=True)
+        for name in ("1.png", "2.png", "3.png"):
+            (self.cats / name).write_bytes(name.encode())
+        (self.input_root / "Sources" / "dogs").mkdir()
+        self._orig_data_dir = os.environ.get("COMFYUI_IMAGE_LEDGER_DIR")
+        os.environ["COMFYUI_IMAGE_LEDGER_DIR"] = str(Path(self.temp.name) / "ledger-data")
+        settings_module.save_settings({"library_folder": "Sources", "auto_move": False})
+        self.tracker = importlib.import_module(f"{PACKAGE_NAME}.global_tracker")
+        self._orig_input_root = self.tracker._input_root
+        self._orig_ledger = self.tracker._ledger
+        self._orig_pick_folder = self.tracker._LAST_PICK_FOLDER
+        self.tracker._input_root = lambda: self.input_root
+        self.ledger = Ledger(Path(self.temp.name) / "ledger.sqlite3", session_id="pick-test")
+        self.tracker._ledger = lambda: self.ledger
+        self.tracker._RANDOM_SKIPPED.clear()
+        self.tracker.invalidate_library_index()
+
+    def tearDown(self):
+        self.tracker._input_root = self._orig_input_root
+        self.tracker._ledger = self._orig_ledger
+        self.tracker._LAST_PICK_FOLDER = self._orig_pick_folder
+        self.tracker._RANDOM_SKIPPED.clear()
+        self.tracker.invalidate_library_index()
+        if self._orig_data_dir is None:
+            os.environ.pop("COMFYUI_IMAGE_LEDGER_DIR", None)
+        else:
+            os.environ["COMFYUI_IMAGE_LEDGER_DIR"] = self._orig_data_dir
+        self.temp.cleanup()
+
+    def test_folders_come_from_configured_library(self):
+        folders = self.tracker.list_pick_folders()
+        self.assertEqual([item["path"] for item in folders], ["Sources/cats", "Sources/dogs"])
+        self.assertEqual(folders[0]["pending"], 3)
+
+    def test_tracked_image_is_excluded_without_moving(self):
+        result = self.tracker.mark_sources(annotated_paths=["Sources/cats/2.png"])
+        self.assertEqual(len(result["marked"]), 1)
+        self.assertTrue((self.cats / "2.png").is_file(), "move is off, file must stay")
+
+        listing = self.tracker.list_folder_images("cats")
+        self.assertTrue(listing["ok"], listing)
+        self.assertEqual(listing["folder"], "Sources/cats")
+        self.assertEqual(sorted(item["name"] for item in listing["items"]), ["1.png", "3.png"])
+        self.assertEqual(self.tracker.list_pick_folders()[0]["pending"], 2)
+        for _ in range(6):
+            picked = self.tracker.random_pick_from_folder("", folder="Sources/cats")
+            self.assertNotEqual(Path(picked["selected"]).name, "2.png")
+
+    def test_undo_returns_image_to_pending(self):
+        self.tracker.mark_sources(annotated_paths=["Sources/cats/2.png"])
+        self.tracker.undo_last()
+        names = sorted(item["name"] for item in self.tracker.list_folder_images("cats")["items"])
+        self.assertEqual(names, ["1.png", "2.png", "3.png"])
+
+
+class HookTests(unittest.TestCase):
+    def setUp(self):
+        self.tracker = importlib.import_module(f"{PACKAGE_NAME}.global_tracker")
+        self.previous = {name: sys.modules.get(name) for name in ("execution", "folder_paths")}
+        self.calls = []
+        self._orig_success = self.tracker.on_execution_success
+        self.tracker.on_execution_success = lambda *args: self.calls.append(args)
+
+    def tearDown(self):
+        self.tracker.on_execution_success = self._orig_success
+        for name, module in self.previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+    def _install_execution(self, executor_cls):
+        execution = types.ModuleType("execution")
+        execution.PromptExecutor = executor_cls
+        sys.modules["execution"] = execution
+        self.tracker._wrap_execute()
+
+    def test_async_wrapper_accepts_changed_signature(self):
+        import asyncio
+
+        class PromptExecutor:
+            success = True
+            history_result = {"outputs": {}}
+
+            async def execute_async(self, prompt, prompt_id, extra_data=None, execute_outputs=None, new_flag=False):
+                return "done"
+
+        self._install_execution(PromptExecutor)
+        result = asyncio.run(
+            PromptExecutor().execute_async({"1": {}}, "p1", extra_data={"x": 1}, new_flag=True)
+        )
+        self.assertEqual(result, "done")
+        self.assertEqual(len(self.calls), 1)
+        prompt, prompt_id, extra, history = self.calls[0]
+        self.assertEqual((prompt, prompt_id, extra), ({"1": {}}, "p1", {"x": 1}))
+        self.assertEqual(history, {"outputs": {}})
+
+    def test_sync_execute_is_wrapped_on_older_comfyui(self):
+        class PromptExecutor:
+            success = False
+
+            def execute(self, prompt, prompt_id, extra_data=None):
+                return "ran"
+
+        self._install_execution(PromptExecutor)
+        self.assertEqual(PromptExecutor().execute({}, "p2"), "ran")
+        self.assertEqual(self.calls, [], "failed runs must not be recorded")
+
+    def test_recursive_search_only_hides_archives_under_input(self):
+        seen = []
+        folder_paths = types.ModuleType("folder_paths")
+        folder_paths.recursive_search = lambda directory, excluded_dir_names=None: seen.append(
+            (directory, list(excluded_dir_names or []))
+        )
+        sys.modules["folder_paths"] = folder_paths
+        with tempfile.TemporaryDirectory() as temp:
+            input_root = Path(temp) / "input"
+            orig_input_root = self.tracker._input_root
+            self.tracker._input_root = lambda: input_root
+            try:
+                self.tracker._wrap_recursive_search()
+                folder_paths.recursive_search(str(Path(temp) / "models" / "loras"))
+                folder_paths.recursive_search(str(input_root / "AI"))
+            finally:
+                self.tracker._input_root = orig_input_root
+        self.assertEqual(seen[0][1], [])
+        self.assertIn("_used", seen[1][1])
+
 
 if __name__ == "__main__":
     unittest.main()

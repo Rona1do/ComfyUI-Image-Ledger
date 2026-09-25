@@ -63,7 +63,9 @@ async def list_images_handler(request: web.Request) -> web.Response:
     if folder_paths is None:
         return _json_error("folder_paths unavailable", status=500)
 
-    subfolder = _normalize_subfolder(request.rel_url.query.get("subfolder", "AI"))
+    from .global_settings import library_folder
+
+    subfolder = _normalize_subfolder(request.rel_url.query.get("subfolder", library_folder()))
     recursive = str(request.rel_url.query.get("recursive", "1")).lower() not in {
         "0",
         "false",

@@ -2,9 +2,11 @@
 
 [English](README.md) · [安全策略](SECURITY.md) · [参与贡献](CONTRIBUTING.md)
 
-ComfyUI Image Ledger 用来记录“哪些原图已经真正生成过最终视频”。它提供全局图库、随机无重复队列和成片后记账；普通工作流无需逐个添加自定义节点。
+**在 ComfyUI 里批量图生视频，同一张原图不会被重复跑。**
 
-> 当前版本：公开测试版 `0.1.0`。默认开启记账，但**默认不移动任何原图**。
+Image Ledger 会记住哪些原图已经真正生成过最终视频。你从图库里挑图或随机抽一张，点「用这张跑」，跑完的原图会自动退出待选队列。现有的 `LoadImage` 工作流不用改。
+
+> 当前版本：公开测试版 `0.2.0`。默认开启记账，但**默认不移动任何原图**。
 
 ![全局原图台账面板](docs/assets/global-panel-zh.png)
 
@@ -19,7 +21,15 @@ ComfyUI Image Ledger 用来记录“哪些原图已经真正生成过最终视�
 
 ## 安装
 
-把仓库克隆到 `ComfyUI/custom_nodes` 后重启 ComfyUI：
+**ComfyUI-Manager（推荐）：** 打开 Manager → Custom Nodes Manager，搜索 **Image Ledger**，安装后重启 ComfyUI。
+
+**comfy-cli：**
+
+```bash
+comfy node install comfyui-image-ledger
+```
+
+**手动安装：** 把仓库克隆到 `ComfyUI/custom_nodes` 后重启 ComfyUI：
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -30,9 +40,9 @@ git clone https://github.com/Rona1do/ComfyUI-Image-Ledger.git
 
 ## 最快上手：全局模式
 
-1. 把原图库放在 `ComfyUI/input/AI` 下，并用一级文件夹分类。
-2. 重启后，右下角会显示“全局原图台账”。
-3. 选择分类，然后浏览大图或随机抽取。
+1. 把原图库放在 `ComfyUI/input/AI` 下，并用一级文件夹分类。想用别的目录，可以在 `Settings → Image Ledger → Global tracking → Library folder` 里修改，例如填 `Sources` 就是 `ComfyUI/input/Sources`。`input` 下也可以放一个目录链接，指向其他磁盘上的图库。
+2. 重启后，右下角会显示“全局原图台账”。点 `–` 可以收起。
+3. 选择分类，然后浏览大图或随机抽取。面板会显示这个分类还剩多少张没跑。
 4. 点击“用这张跑”，脚本会写回最可能的源图 `LoadImage` 并 Queue。
 5. 工作流成功保存最终视频后，这张图才会记为完成。
 6. 点击「重跑上一张」，会把刚才那张原图重新写回源图节点并排队。文件已经在 `_used` 里也可以。
@@ -41,7 +51,7 @@ git clone https://github.com/Rona1do/ComfyUI-Image-Ledger.git
 
 ## 文件移动是可选功能
 
-默认只记账，不移动文件。需要自动归档时，在以下位置明确开启：
+默认只记账，不移动文件。跑过的原图会留在原处，但浏览和随机抽都会跳过它们。需要自动归档时，在以下位置明确开启：
 
 `Settings → Image Ledger → Global tracking → Move source`
 
@@ -80,7 +90,8 @@ ComfyUI/user/default/image_ledger/thumbs/
 ## 已知限制
 
 - 推荐 Python 3.10+ 和近期版本的 ComfyUI。
-- 全局图库目前约定使用 `ComfyUI/input/AI`。
+- 原图库必须位于 `ComfyUI/input` 下（可以用目录链接指向任意位置），默认是 `input/AI`。
+- 不开启移动时，靠路径识别已跑原图。把跑过的图改名复制一份，图库里仍会显示为待选，但记账时仍会按内容哈希去重。
 - 自动记账需要执行结果中出现成功保存的视频条目。
 - 旧视频只有保留兼容的 prompt metadata 才能恢复原图。
 - ComfyUI 内部执行接口可能变化；反馈兼容问题时请附 ComfyUI 版本或提交日期。

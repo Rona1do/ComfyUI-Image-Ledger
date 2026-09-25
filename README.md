@@ -5,9 +5,15 @@
 
 [简体中文](README.zh-CN.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-ComfyUI Image Ledger tracks which source images have successfully produced a final video. It adds a global gallery and a durable, no-repeat queue without forcing you to edit every workflow.
+**Batch image-to-video in ComfyUI without running the same source image twice.**
 
-> Status: public beta (`0.1.0`). Tracking is enabled by default; moving source files is **off by default**.
+Image Ledger remembers which source images have already produced a finished video. Pick the next image from a gallery or at random, click **Run this**, and completed images drop out of the queue automatically. It works with your existing `LoadImage` workflows, so you don't have to rebuild them.
+
+> Status: public beta (`0.2.0`). Tracking is enabled by default; moving source files is **off by default**.
+
+![Global Image Ledger panel](docs/assets/global-panel-zh.png)
+
+<sub>Screenshot shows the Simplified Chinese UI. The panel switches to English automatically.</sub>
 
 ## Why it exists
 
@@ -17,6 +23,8 @@ Large image-to-video libraries are surprisingly hard to manage: a source may be 
 
 - Global tracking for ordinary `LoadImage` workflows—no custom nodes required.
 - Full-screen source gallery, category picker, random pick, skip, run, rerun last, reject, and undo.
+- Per-category progress: see how many images are still pending.
+- Completed images are excluded from the gallery and random pick, with or without moving files.
 - Optional move-on-success into a sibling `_used` folder.
 - SHA-256 content deduplication, so renamed copies count as the same image.
 - SQLite transactions and reservations prevent concurrent jobs from selecting the same source.
@@ -28,7 +36,15 @@ Large image-to-video libraries are surprisingly hard to manage: a source may be 
 
 ## Installation
 
-Clone this repository into `ComfyUI/custom_nodes`, then restart ComfyUI:
+**ComfyUI-Manager (recommended):** open Manager → Custom Nodes Manager, search for **Image Ledger**, install, and restart ComfyUI.
+
+**comfy-cli:**
+
+```bash
+comfy node install comfyui-image-ledger
+```
+
+**Manual:** clone this repository into `ComfyUI/custom_nodes`, then restart ComfyUI:
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -50,10 +66,10 @@ No extra Python package is required. Pillow, SQLite, and aiohttp are supplied by
        └── 001.webp
    ```
 
-   A directory link/junction under `input/AI` may point to a library on another drive.
+   A directory link/junction under `input/AI` may point to a library on another drive. To use a different folder, change `Settings → Image Ledger → Global tracking → Library folder` (for example `Sources` means `ComfyUI/input/Sources`).
 
-2. Restart ComfyUI. The **Global Image Ledger** panel appears in the lower-right corner.
-3. Choose a category, then open the gallery or pick a random image.
+2. Restart ComfyUI. The **Global Image Ledger** panel appears in the lower-right corner. Use `–` to collapse it.
+3. Choose a category, then open the gallery or pick a random image. The panel shows how many images are still pending in that category.
 4. Click **Run this**. The selected image is written to the most likely source `LoadImage` node and the workflow is queued.
 5. When the workflow finishes with a saved video, the image is recorded as complete.
 6. Click **Rerun last** to load that same source again and queue the workflow. This still works after the file has moved into `_used`.
@@ -62,7 +78,7 @@ Image Ledger prefers `LoadImage` nodes titled like “first frame”, “源图�
 
 ### Safe file handling
 
-By default, completion is recorded without moving anything. To archive completed sources, enable:
+By default, completion is recorded without moving anything. Completed images stay where they are, but the gallery and random pick skip them. To archive completed sources, enable:
 
 `Settings → Image Ledger → Global tracking → Move source`
 
@@ -105,7 +121,8 @@ The extension reads files only under ComfyUI input/output roots (including direc
 ## Compatibility and limitations
 
 - Python 3.10+ and a recent ComfyUI release are recommended.
-- The global gallery currently uses `ComfyUI/input/AI` as its library convention.
+- The source library must live under `ComfyUI/input` (a directory link there can point anywhere). It defaults to `input/AI`.
+- Without move-on-success, a completed image is recognized by its path. A renamed copy of it shows up as pending in the gallery, although tracking still deduplicates it by content.
 - Automatic tracking requires a successful workflow result that contains a saved video entry.
 - Metadata import can only recover sources from videos that retained compatible prompt metadata.
 - ComfyUI internal execution APIs can change; include your ComfyUI commit/date when reporting a compatibility issue.

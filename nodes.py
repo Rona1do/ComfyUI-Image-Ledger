@@ -9,6 +9,7 @@ from typing import Any
 import folder_paths
 import nodes as comfy_nodes
 
+from .global_settings import library_folder
 from .history import import_history
 from .ledger import (
     DEFAULT_EXTENSIONS,
@@ -108,11 +109,11 @@ def _resolve_relative_folder(
 
 def _source_root(source_subfolder: str) -> Path:
     folder = _normalize_subfolder(source_subfolder)
-    # If callers still pass a corrupted "true"/"false", treat as empty then AI default.
+    # If callers still pass a corrupted "true"/"false", treat as empty then the library default.
     if not folder:
-        ai = Path(os.path.abspath(str(folder_paths.get_input_directory()))) / "AI"
-        if ai.exists() and ai.is_dir():
-            folder = "AI"
+        library = library_folder()
+        if Path(os.path.abspath(str(folder_paths.get_input_directory())), library).is_dir():
+            folder = library
     try:
         return _resolve_relative_folder(
             folder_paths.get_input_directory(),
@@ -1023,7 +1024,7 @@ class ImageLedgerSimpleTrackedImageLoader(ImageLedgerTrackedImageLoader):
                 "source_subfolder": (
                     "STRING",
                     {
-                        "default": "AI",
+                        "default": library_folder(),
                         "multiline": False,
                         "display_name": "Source folder (under input)",
                         "tooltip": (
@@ -1108,8 +1109,8 @@ class ImageLedgerSimpleTrackedImageLoader(ImageLedgerTrackedImageLoader):
     ):
         folder = _normalize_subfolder(source_subfolder)
         # Recover common widget-order corruption: boolean leaked into folder field.
-        if not folder and Path(folder_paths.get_input_directory(), "AI").exists():
-            folder = "AI"
+        if not folder and Path(folder_paths.get_input_directory(), library_folder()).is_dir():
+            folder = library_folder()
         if _is_manual_mode(pick_mode):
             annotated, abs_path = _manual_input_path(manual_path)
             return _result_from_manual_selection(

@@ -1673,6 +1673,22 @@ class Ledger:
             ).fetchall()
         return {str(row["sha256"]).lower() for row in rows if row["sha256"]}
 
+    def done_rel_paths(self, campaign: str) -> set[str]:
+        """Case-folded input-relative paths of completed sources."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT rel_path FROM items
+                WHERE campaign=? AND state='done'
+                """,
+                (campaign,),
+            ).fetchall()
+        return {
+            str(row["rel_path"]).replace("\\", "/").strip("/").casefold()
+            for row in rows
+            if row["rel_path"]
+        }
+
     def list_used_rel_paths(self, campaign: str) -> list[str]:
         with self._connection() as connection:
             rows = connection.execute(

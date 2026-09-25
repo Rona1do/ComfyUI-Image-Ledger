@@ -1,12 +1,12 @@
 [project]
 name = "comfyui-image-ledger"
-version = "0.1.0"
-description = "Global source-image tracking, gallery browsing, and no-repeat video queues for ComfyUI"
+version = "0.2.0"
+description = "Batch image-to-video without repeats: tracks which source images already produced a video, with a gallery, random pick, and rerun for any LoadImage workflow"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "bayforest" }]
-keywords = ["comfyui", "image-to-video", "gallery", "workflow", "sqlite"]
+keywords = ["comfyui", "image-to-video", "i2v", "batch", "queue", "gallery", "workflow", "sqlite"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
@@ -24,6 +24,12 @@ Homepage = "https://github.com/Rona1do/ComfyUI-Image-Ledger"
 Documentation = "https://github.com/Rona1do/ComfyUI-Image-Ledger#readme"
 Repository = "https://github.com/Rona1do/ComfyUI-Image-Ledger"
 Issues = "https://github.com/Rona1do/ComfyUI-Image-Ledger/issues"
+
+[tool.comfy]
+PublisherId = "bayforest"
+DisplayName = "ComfyUI Image Ledger"
+Icon = ""
+includes = []
 
 [tool.ruff]
 target-version = "py310"

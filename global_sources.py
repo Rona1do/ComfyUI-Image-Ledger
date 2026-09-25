@@ -267,13 +267,22 @@ def category_folder_of(
 ) -> str:
     """Top-level library category, e.g. AI/portraits.
 
-    Never returns the whole AI root. Basename-only paths return "".
+    Never returns the whole library root. Basename-only paths return "".
     """
     folder = source_folder_of(relative, used_dirname, poor_dirname)
     parts = [part for part in folder.split("/") if part]
-    if len(parts) >= 2 and parts[0].casefold() == library_folder.casefold():
-        return "/".join(parts[:2])
-    return ""
+    library = [part.casefold() for part in normalize_rel(library_folder).split("/") if part]
+    if not library or len(parts) <= len(library):
+        return ""
+    if [part.casefold() for part in parts[: len(library)]] != library:
+        return ""
+    return "/".join(parts[: len(library) + 1])
+
+
+def is_library_rel(relative: str, library_folder: str = "AI") -> bool:
+    rel = normalize_rel(relative).casefold()
+    root = normalize_rel(library_folder).casefold()
+    return bool(root) and rel.startswith(f"{root}/")
 
 
 def poor_destination(
@@ -310,7 +319,6 @@ def hard_move(src: Path, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest = unique_path(dest)
     try:
-        src_stat = src.stat()
         dest_stat = dest.stat() if dest.exists() else None
         if dest_stat is not None and dest.resolve() == src.resolve():
             return dest

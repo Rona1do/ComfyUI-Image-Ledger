@@ -18,6 +18,12 @@ const t = (en, zh) => (IS_ZH ? zh : en);
 
 let autoQueueInFlight = false;
 
+// Same setting as the global panel; the library defaults to input/AI.
+function libraryFolder() {
+  const value = app.ui?.settings?.getSettingValue?.("ImageLedger.GlobalTracker.LibraryFolder", "AI");
+  return String(value || "").trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "AI";
+}
+
 function ensureStyle() {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement("style");
@@ -371,7 +377,7 @@ function isManualPickMode(mode) {
   );
 }
 
-function sanitizeSubfolder(value, fallback = "AI") {
+function sanitizeSubfolder(value, fallback = libraryFolder()) {
   if (typeof value === "boolean") return fallback;
   const text = String(value ?? "")
     .trim()
@@ -404,7 +410,7 @@ function readLoaderSettings(node) {
         : isManualPickMode(pickRaw)
           ? MODE_MANUAL
           : MODE_RANDOM;
-    const source = sanitizeSubfolder(widgetValue(node, "source_subfolder", "AI"), "AI");
+    const source = sanitizeSubfolder(widgetValue(node, "source_subfolder", libraryFolder()));
     const folderWidget = node.widgets?.find((w) => w.name === "source_subfolder");
     if (folderWidget && String(folderWidget.value) !== source) {
       folderWidget.value = source;
@@ -882,7 +888,7 @@ async function selectManualPath(node, panel, path) {
 
 async function uploadLocalFileAndSelect(node, panel, file) {
   const settings = readLoaderSettings(node);
-  const subfolder = settings.source_subfolder || "AI";
+  const subfolder = settings.source_subfolder || libraryFolder();
   panel.body.textContent = t(`Uploading ${file.name} to input/${subfolder}…`, `正在上传 ${file.name} 到 input/${subfolder} …`);
   setButtons(panel, { held: panel.held, busy: true, manual: true });
   try {
@@ -911,7 +917,7 @@ async function uploadLocalFileAndSelect(node, panel, file) {
 
 function openDirectoryPicker(node, panel) {
   const settings = readLoaderSettings(node);
-  const subfolder = settings.source_subfolder || "AI";
+  const subfolder = settings.source_subfolder || libraryFolder();
   const recursive = settings.recursive !== false;
 
   const overlay = document.createElement("div");

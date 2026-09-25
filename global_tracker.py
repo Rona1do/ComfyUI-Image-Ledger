@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import threading
 import traceback
 import uuid
@@ -14,6 +13,7 @@ from .global_settings import (
     GLOBAL_CAMPAIGN,
     POOR_DIRNAME,
     ledger_db_path,
+    library_folder,
     load_settings,
     profile_data_root,
 )
@@ -26,13 +26,13 @@ from .global_sources import (
     hard_move,
     index_library_by_name,
     input_relative,
+    is_library_rel,
     is_watched_rel,
     iter_library_images,
     library_root,
     logical_join,
     pick_library_match,
     poor_destination,
-    source_folder_of,
     unique_path,
     unsuffixed_filename,
     used_destination,
@@ -66,9 +66,27 @@ def _output_root() -> Path:
     return Path(os.path.abspath(str(folder_paths.get_output_directory())))
 
 
+def _category_of(relative: str, cfg: dict[str, Any] | None = None) -> str:
+    cfg = cfg if cfg is not None else load_settings()
+    return category_folder_of(
+        relative,
+        str(cfg.get("used_dirname") or "_used"),
+        str(cfg.get("poor_dirname") or POOR_DIRNAME),
+        library_folder(cfg),
+    )
+
+
+def _done_paths() -> set[str]:
+    """Completed sources that still sit in their category (move-on-success off)."""
+    try:
+        return _ledger().done_rel_paths(GLOBAL_CAMPAIGN)
+    except Exception:
+        return set()
+
+
 def _library_index(input_root: Path, skip_dir_names: list[str]) -> dict[str, list[Path]]:
     global _LIBRARY_INDEX, _LIBRARY_INDEX_KEY
-    root = library_root(input_root, "AI")
+    root = library_root(input_root, library_folder())
     key = f"{root}|{','.join(skip_dir_names)}"
     if _LIBRARY_INDEX is not None and _LIBRARY_INDEX_KEY == key:
         return _LIBRARY_INDEX
@@ -92,7 +110,7 @@ def _resolve_source(
     hash_func=None,
     preferred_folder: str = "",
 ) -> tuple[str, Path] | None:
-    """Resolve a LoadImage path, preferring the Pictures/AI library copy."""
+    """Resolve a LoadImage path, preferring the copy inside the source library."""
     raw = (annotated or "").replace("\\", "/").strip()
     if not raw:
         return None
@@ -117,14 +135,14 @@ def _resolve_source(
                     continue
             return input_relative(cand, input_root), cand
 
-    # Already an AI-relative path that exists.
+    # Already a library-relative path that exists.
     try:
         direct = logical_join(input_root, raw)
     except ValueError:
         direct = None
     if direct is not None and direct.is_file():
         rel = input_relative(direct, input_root)
-        if rel.replace("\\", "/").startswith("AI/"):
+        if is_library_rel(rel, library_folder()):
             return rel, direct
 
     library = pick_library_match(
@@ -228,13 +246,14 @@ def stage_for_loadimage(path_hint: str) -> dict[str, Any]:
         return {"ok": False, "error": f"Source image not found: {path_hint}"}
     load_name = library_rel.replace("\\", "/")
     _CURRENT_PICK = load_name
-    category = category_folder_of(load_name)
+    category = _category_of(load_name, cfg)
     if category:
         _LAST_PICK_FOLDER = category
     return {
         "ok": True,
         "load_name": load_name,
         "source": load_name,
+        "folder": category,
         "image": _preview_payload(load_name),
         "message": f"Using library path {load_name} without copying the file.",
     }
@@ -287,7 +306,7 @@ def mark_sources(
     hash_func = ledger.hash_file_cached
     for annotated in candidates:
         # Hash a same-name input-root copy first so duplicate names (1.png)
-        # can be matched to the correct character folder in Pictures/AI.
+        # can be matched to the correct category folder in the library.
         expected_sha = ""
         annotated_name = Path(annotated.replace("\\", "/")).name
         hash_candidates = [
@@ -301,7 +320,7 @@ def mark_sources(
                     break
             except Exception:
                 continue
-        preferred = _LAST_PICK_FOLDER or category_folder_of(_CURRENT_PICK)
+        preferred = _LAST_PICK_FOLDER or _category_of(_CURRENT_PICK, cfg)
         resolved = _resolve_source(
             annotated,
             input_root,
@@ -333,9 +352,8 @@ def mark_sources(
         except OSError:
             size_bytes = 0
             mtime_ns = 0
-        preferred = _LAST_PICK_FOLDER or category_folder_of(_CURRENT_PICK)
         dest_rel_hint = rel_path
-        if preferred and not str(rel_path).replace("\\", "/").startswith("AI/"):
+        if preferred and not is_library_rel(rel_path, library_folder(cfg)):
             dest_rel_hint = f"{preferred}/{unsuffixed_filename(Path(rel_path).name)}"
         if should_move:
             try:
@@ -560,11 +578,7 @@ def stage_last_run(path_hint: str = "") -> dict[str, Any]:
         event = None
 
     if not _LAST_PICK_FOLDER and isinstance(event, dict):
-        category = category_folder_of(
-            str(event.get("moved_to") or event.get("rel_path") or ""),
-            used_dirname,
-            poor_dirname,
-        )
+        category = _category_of(str(event.get("moved_to") or event.get("rel_path") or ""), cfg)
         if category:
             _LAST_PICK_FOLDER = category
 
@@ -652,31 +666,33 @@ def mark_poor_quality(annotated: str = "") -> dict[str, Any]:
 
 
 def list_pick_folders() -> list[dict[str, Any]]:
-    """First-level folders under input/AI, excluding _used."""
+    """First-level folders under the source library, excluding _used."""
     cfg = load_settings()
     input_root = _input_root()
     used_dirname = str(cfg.get("used_dirname") or "_used")
     poor_dirname = str(cfg.get("poor_dirname") or POOR_DIRNAME)
     skip = {name.casefold() for name in (cfg.get("skip_dir_names") or [])}
     skip.update({used_dirname.casefold(), poor_dirname.casefold()})
-    ai = library_root(input_root, "AI")
-    if not ai.is_dir():
+    library = library_folder(cfg)
+    root = library_root(input_root, library)
+    if not root.is_dir():
         return []
     names = [
         path.name
-        for path in sorted(ai.iterdir(), key=lambda item: item.name.casefold())
+        for path in sorted(root.iterdir(), key=lambda item: item.name.casefold())
         if path.is_dir() and path.name.casefold() not in skip
     ]
     counts = {name: 0 for name in names}
-    for path in iter_library_images(ai, skip):
+    done = _done_paths()
+    for path in iter_library_images(root, skip):
         try:
-            top = path.relative_to(ai).parts[0]
+            top = path.relative_to(root).parts[0]
         except ValueError:
             continue
-        if top in counts:
+        if top in counts and input_relative(path, input_root).casefold() not in done:
             counts[top] += 1
     return [
-        {"path": f"AI/{name}", "name": name, "pending": counts.get(name, 0)}
+        {"path": f"{library}/{name}", "name": name, "pending": counts.get(name, 0)}
         for name in names
     ]
 
@@ -691,6 +707,7 @@ def pending_files_in_category(category: str) -> list[Path]:
     folder_abs = logical_join(input_root, category)
     if not folder_abs.is_dir():
         return []
+    done = _done_paths()
     files: list[Path] = []
     for path in folder_abs.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
@@ -702,6 +719,8 @@ def pending_files_in_category(category: str) -> list[Path]:
         except ValueError:
             continue
         if any(part.casefold() in skip_dirs for part in rel_parts[:-1]):
+            continue
+        if input_relative(path, input_root).casefold() in done:
             continue
         files.append(path)
     files.sort(key=lambda item: item.relative_to(folder_abs).as_posix().casefold())
@@ -796,24 +815,22 @@ def resolve_pick_folder(
     current_path: str = "",
     folder: str = "",
 ) -> str:
-    """Resolve a locked category such as AI/真实风格真人. Never the whole AI root."""
+    """Resolve a locked category such as AI/portraits. Never the whole library root."""
     cfg = load_settings()
-    used_dirname = str(cfg.get("used_dirname") or "_used")
-    poor_dirname = str(cfg.get("poor_dirname") or POOR_DIRNAME)
+    library = library_folder(cfg)
     explicit = (folder or "").replace("\\", "/").strip().strip("/")
     if explicit:
-        if explicit.casefold() == "ai":
+        if explicit.casefold() == library.casefold():
             return ""
-        if not explicit.lower().startswith("ai/"):
-            explicit = f"AI/{explicit}"
-        category = category_folder_of(explicit + "/x.png", used_dirname, poor_dirname)
-        return category
+        if not is_library_rel(explicit, library):
+            explicit = f"{library}/{explicit}"
+        return _category_of(explicit + "/x.png", cfg)
 
-    inferred = category_folder_of(current_path, used_dirname, poor_dirname)
+    inferred = _category_of(current_path, cfg)
     if inferred:
         return inferred
 
-    # LoadImage often stores only the basename. Unique name under Pictures/AI
+    # LoadImage often stores only the basename. A unique name in the library
     # can still recover the category.
     name = Path((current_path or "").replace("\\", "/")).name
     if name:
@@ -823,8 +840,7 @@ def resolve_pick_folder(
             _library_index(input_root, list(cfg.get("skip_dir_names") or [])),
         )
         if match is not None:
-            rel = input_relative(match, input_root)
-            return category_folder_of(rel, used_dirname, poor_dirname)
+            return _category_of(input_relative(match, input_root), cfg)
     return ""
 
 
@@ -834,14 +850,8 @@ def random_pick_from_folder(
     folder: str = "",
     skip_current: bool = True,
 ) -> dict[str, Any]:
-    cfg = load_settings()
-    input_root = _input_root()
-    used_dirname = str(cfg.get("used_dirname") or "_used")
-    poor_dirname = str(cfg.get("poor_dirname") or POOR_DIRNAME)
-    skip_dirs = {name.casefold() for name in (cfg.get("skip_dir_names") or [])}
-    skip_dirs.update({used_dirname.casefold(), poor_dirname.casefold()})
-
     global _LAST_PICK_FOLDER
+    input_root = _input_root()
     category = resolve_pick_folder(current_path, folder)
     if not category:
         return {
@@ -850,25 +860,11 @@ def random_pick_from_folder(
             "folders": list_pick_folders(),
         }
 
-    folder_abs = logical_join(input_root, category)
-    if not folder_abs.is_dir():
+    if not logical_join(input_root, category).is_dir():
         return {"ok": False, "error": f"Folder not found: {category}"}
 
     current_name = Path((current_path or "").replace("\\", "/")).name.casefold()
-    files: list[Path] = []
-    for path in folder_abs.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
-            continue
-        if path.name.startswith("."):
-            continue
-        try:
-            rel_parts = path.relative_to(folder_abs).parts
-        except ValueError:
-            continue
-        if any(part.casefold() in skip_dirs for part in rel_parts[:-1]):
-            continue
-        files.append(path)
-    files.sort(key=lambda item: item.relative_to(folder_abs).as_posix().casefold())
+    files = pending_files_in_category(category)
     if not files:
         return {"ok": False, "error": f"No pending images in {category} (_used is excluded)."}
 
@@ -957,9 +953,11 @@ def _remove_empty_dirs(root: Path) -> None:
 
 
 def restructure_used_folders(used_dirname: str = "_used") -> dict[str, Any]:
-    """AI/_used/分类/图.png -> AI/分类/_used/图.png"""
+    """Legacy layout fix: AI/_used/category/1.png -> AI/category/_used/1.png"""
     input_root = _input_root()
-    dump = logical_join(input_root, f"AI/{used_dirname}")
+    library = library_folder()
+    depth = len(library.split("/"))
+    dump = logical_join(input_root, f"{library}/{used_dirname}")
     moved = 0
     samples: list[dict[str, str]] = []
     if dump.is_dir():
@@ -967,10 +965,10 @@ def restructure_used_folders(used_dirname: str = "_used") -> dict[str, Any]:
         for path in files:
             rel = input_relative(path, input_root).replace("\\", "/")
             parts = [part for part in rel.split("/") if part]
-            if len(parts) < 3 or parts[1].casefold() != used_dirname.casefold():
+            if len(parts) < depth + 2 or parts[depth].casefold() != used_dirname.casefold():
                 continue
-            rest = parts[2:]
-            new_rel = "/".join(["AI", *rest[:-1], used_dirname, rest[-1]])
+            rest = parts[depth + 1 :]
+            new_rel = "/".join([library, *rest[:-1], used_dirname, rest[-1]])
             dest = logical_join(input_root, new_rel)
             dest = hard_move(path, dest)
             moved += 1
@@ -1001,7 +999,7 @@ def relocate_recorded(*, force_move: bool = True) -> dict[str, Any]:
     skipped = 0
     missing = 0
     samples: list[dict[str, Any]] = list(restructured.get("samples") or [])
-    library = library_root(input_root, "AI")
+    library = library_root(input_root, library_folder(cfg))
     for path in iter_library_images(library, skip):
         rel = input_relative(path, input_root)
         dest_rel = used_destination(rel, used_dirname)
@@ -1136,35 +1134,57 @@ def scan_existing_videos(
     }
 
 
+def _after_execute(executor: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+    """Record sources once ComfyUI reports a successful run.
+
+    Arguments are read positionally or by name so the hook survives
+    signature changes in PromptExecutor.
+    """
+    try:
+        if not getattr(executor, "success", False):
+            return
+        prompt = args[0] if len(args) > 0 else kwargs.get("prompt")
+        prompt_id = args[1] if len(args) > 1 else kwargs.get("prompt_id", "")
+        extra_data = args[2] if len(args) > 2 else kwargs.get("extra_data")
+        on_execution_success(
+            prompt,
+            str(prompt_id),
+            extra_data if isinstance(extra_data, dict) else {},
+            getattr(executor, "history_result", None),
+        )
+    except Exception as error:
+        print(f"[ComfyUI Image Ledger] Execution hook failed: {error}")
+        traceback.print_exc()
+
+
 def _wrap_execute() -> None:
     import execution
 
-    original = execution.PromptExecutor.execute_async
+    executor = execution.PromptExecutor
+    # Current ComfyUI runs prompts through execute_async; older builds use execute.
+    name = "execute_async" if hasattr(executor, "execute_async") else "execute"
+    original = getattr(executor, name)
     if getattr(original, "_image_ledger_global", False):
         return
 
-    async def wrapped(self, prompt, prompt_id, extra_data=None, execute_outputs=None):
-        if extra_data is None:
-            extra_data = {}
-        if execute_outputs is None:
-            execute_outputs = []
-        try:
-            return await original(self, prompt, prompt_id, extra_data, execute_outputs)
-        finally:
+    if name == "execute_async":
+
+        async def wrapped(self, *args, **kwargs):
             try:
-                if getattr(self, "success", False):
-                    on_execution_success(
-                        prompt,
-                        str(prompt_id),
-                        extra_data,
-                        getattr(self, "history_result", None),
-                    )
-            except Exception as error:
-                print(f"[ComfyUI Image Ledger] Execution hook failed: {error}")
-                traceback.print_exc()
+                return await original(self, *args, **kwargs)
+            finally:
+                _after_execute(self, args, kwargs)
+
+    else:
+
+        def wrapped(self, *args, **kwargs):
+            try:
+                return original(self, *args, **kwargs)
+            finally:
+                _after_execute(self, args, kwargs)
 
     wrapped._image_ledger_global = True  # type: ignore[attr-defined]
-    execution.PromptExecutor.execute_async = wrapped
+    setattr(executor, name, wrapped)
 
 
 def _remember_pick_from_prompt(json_data):
@@ -1172,18 +1192,17 @@ def _remember_pick_from_prompt(json_data):
     prompt = json_data.get("prompt") if isinstance(json_data, dict) else None
     if not isinstance(prompt, dict):
         return json_data
-    for node in prompt.values():
-        if not isinstance(node, dict) or node.get("class_type") != "LoadImage":
-            continue
-        image = (node.get("inputs") or {}).get("image")
-        if isinstance(image, str) and image.strip():
-            _CURRENT_PICK = image.replace("\\", "/").strip()
+    # Same source-node rules as tracking, so a last-frame or mask loader
+    # listed first in the prompt is never remembered as the pick.
+    for ref in find_source_images_from_prompt(prompt):
+        if ref.class_type == "LoadImage":
+            _CURRENT_PICK = ref.annotated
             break
     return json_data
 
 
 def _wrap_loadimage_paths() -> None:
-    """Let stock LoadImage open AI/分类/xxx.png without copying into input root."""
+    """Let stock LoadImage open AI/category/1.png without copying into input root."""
     import folder_paths
     import nodes
 
@@ -1244,6 +1263,13 @@ def _wrap_recursive_search() -> None:
         return
 
     def wrapped(directory, excluded_dir_names=None):
+        # Only hide archive folders from input listings, never from model folders.
+        try:
+            inside_input = Path(os.path.abspath(str(directory))).is_relative_to(_input_root())
+        except Exception:
+            inside_input = False
+        if not inside_input:
+            return original(directory, excluded_dir_names=excluded_dir_names)
         excluded = list(excluded_dir_names or [])
         try:
             used = str(load_settings().get("used_dirname") or "_used")

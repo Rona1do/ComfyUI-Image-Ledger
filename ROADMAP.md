@@ -5,10 +5,9 @@ This roadmap is directional rather than a promise of dates.
 ## Near term
 
 - Test current ComfyUI stable and nightly releases.
-- Add a configurable global library root instead of the `input/AI` convention.
+- Ship an example image-to-video workflow in `example_workflows/`.
 - Add pagination and keyboard navigation to the gallery.
 - Expand tests around routes, moves, undo, and video metadata.
-- Publish the first signed release and submit to the ComfyUI Registry.
 
 ## Later
 
