@@ -86,6 +86,10 @@ Then `input/AI/portraits/001.png` moves to `input/AI/portraits/_used/001.png`.
 
 Rejected images move to `_used/_rejected`. The latest operation can be undone from the panel. Test move behavior on a small backup library before enabling it for valuable data.
 
+## Example workflow
+
+An [example Wan 2.2 image-to-video workflow](example_workflows/Image%20Ledger%20-%20Wan%202.2%205B%20I2V.json) is included for the global panel. It uses a `LoadImage` node titled **First Frame**, which Image Ledger can replace when you pick a source. The required Wan models are listed in the [workflow notes](example_workflows/README.md).
+
 ## Advanced mode: explicit workflow commit
 
 Use the nodes under **Image Ledger** when you need exact queue/commit ordering:
